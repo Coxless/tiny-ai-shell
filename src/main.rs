@@ -8,6 +8,8 @@ mod logger;
 mod config;
 
 use clap::Parser;
+use llm::LlmClient;
+use ui::Action;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -43,10 +45,69 @@ struct Args {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    eprintln!("input: {}", args.input);
-    eprintln!("dry: {}", args.dry);
-    eprintln!("explain: {}", args.explain);
-    eprintln!("no_context: {}", args.no_context);
-    eprintln!("model: {}", args.model);
-    eprintln!("url: {}", args.url);
+
+    let ctx = if args.no_context {
+        context::default_context()
+    } else {
+        context::gather()
+    };
+
+    let base_url = llm::resolve_base_url(&args.url);
+    let client = LlmClient::new(args.model.clone(), base_url);
+
+    let command = match client.generate(&args.input, &ctx).await {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    if args.dry {
+        let exit_code = executor::run(&command, true).unwrap_or(0);
+        std::process::exit(exit_code);
+    }
+
+    let action = match ui::prompt_action(&command) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    match action {
+        Action::Execute => {
+            let exit_code = match executor::run(&command, false) {
+                Ok(code) => code,
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    1
+                }
+            };
+            std::process::exit(exit_code);
+        }
+        Action::Cancel => {
+            println!("Cancelled.");
+            std::process::exit(0);
+        }
+        Action::Copy => {
+            // Step 7
+            match clipboard::copy(&command) {
+                Ok(_) => println!("✓ Copied to clipboard"),
+                Err(e) => eprintln!("Error: {}", e),
+            }
+            std::process::exit(0);
+        }
+        Action::Explain => {
+            // Step 8
+            eprintln!("Explain will be implemented in step 8.");
+            std::process::exit(0);
+        }
+        Action::Rewrite => {
+            // Step 9
+            eprintln!("Rewrite will be implemented in step 9.");
+            std::process::exit(0);
+        }
+    }
 }
