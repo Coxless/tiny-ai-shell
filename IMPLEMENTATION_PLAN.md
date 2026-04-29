@@ -39,7 +39,7 @@
 
 - 単一バイナリビルドが容易（`cargo build --release`）
 - 起動100ms以内を満たす（ゼロコスト抽象・最小ランタイム）
-- クロスプラットフォーム対応
+- 対応OS: **Linux のみ**（macOS・Windows は対象外）
 - 外部ランタイム不要で依存最小化
 
 **ディレクトリ構成**:
@@ -156,7 +156,7 @@ User:
 | カレントディレクトリ | `std::env::current_dir()` | なし |
 | ファイル一覧 | `std::fs::read_dir()` | 最大20件、ファイル名のみ |
 | Gitリポジトリ | `.git` ディレクトリの存在確認 | ブランチ名のみ |
-| OS | `std::env::consts::OS` | なし |
+| OS | 固定値 `"linux"` | なし |
 
 **出力形式**:
 
@@ -313,14 +313,12 @@ let status = std::process::Command::new("sh")
 
 #### プラン
 
-**OS別実装**:
+**Linux向け実装**:
 
-| OS | コマンド | フォールバック |
-|----|---------|--------------|
-| macOS | `pbcopy` | なし |
-| Linux (X11) | `xclip -selection clipboard` | `xsel --clipboard` |
-| Linux (Wayland) | `wl-copy` | xclip にフォールバック |
-| その他 | エラーメッセージ表示 | なし |
+| 環境 | コマンド | フォールバック |
+|------|---------|--------------|
+| Wayland | `wl-copy` | xclip にフォールバック |
+| X11 | `xclip -selection clipboard` | `xsel --clipboard` |
 
 **Wayland検知**: `$WAYLAND_DISPLAY` 環境変数の有無
 
@@ -328,7 +326,7 @@ let status = std::process::Command::new("sh")
 
 ```rust
 pub fn copy(text: &str) -> Result<()> {
-    // cfg!(target_os = ...) や環境変数でOS判定 → 適切なコマンドにパイプ
+    // $WAYLAND_DISPLAY の有無で wl-copy / xclip を選択
 }
 ```
 
@@ -424,7 +422,7 @@ Output exactly ONE shell command, no explanation.
 
 #### プラン
 
-**保存先**: `~/.local/share/ta/history.json`（Linux） / `~/Library/Application Support/ta/history.json`（macOS）
+**保存先**: `~/.local/share/ta/history.json`
 
 **ログエントリ形式**:
 
@@ -501,12 +499,9 @@ build:
     cargo build --release
     cp target/release/ta bin/ta
 
-# クロスコンパイル（cross クレートを使用）
-build-linux:
-    cross build --release --target x86_64-unknown-linux-musl
-
-build-darwin:
-    cross build --release --target aarch64-apple-darwin
+# 静的リンクバイナリ（musl）
+build-static:
+    cargo build --release --target x86_64-unknown-linux-musl
 ```
 
 **インストール手順** (README):
