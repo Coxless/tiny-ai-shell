@@ -1,4 +1,5 @@
 use regex::Regex;
+use std::sync::OnceLock;
 
 #[derive(Debug)]
 pub struct DangerResult {
@@ -6,30 +7,35 @@ pub struct DangerResult {
     pub message: Option<String>,
 }
 
-struct DangerPattern {
-    pattern: &'static str,
-    message: &'static str,
-}
-
-static DANGEROUS_PATTERNS: &[DangerPattern] = &[
-    DangerPattern { pattern: r"rm\s+-rf",          message: "Recursive force delete" },
-    DangerPattern { pattern: r"sudo\s+",            message: "Elevated privileges required" },
-    DangerPattern { pattern: r"chmod\s+777",        message: "Insecure file permissions" },
-    DangerPattern { pattern: r"curl[^|]+\|\s*sh",   message: "Piping curl to shell" },
-    DangerPattern { pattern: r"curl[^|]+\|\s*bash", message: "Piping curl to bash" },
-    DangerPattern { pattern: r">\s*/dev/sd",        message: "Writing to block device" },
-    DangerPattern { pattern: r"mkfs",               message: "Filesystem formatting" },
-    DangerPattern { pattern: r"dd\s+if=",           message: "Low-level disk operation" },
-    DangerPattern { pattern: r":\(\)\{.*\}",        message: "Fork bomb detected" },
+static DANGEROUS_PATTERNS: &[(&str, &str)] = &[
+    (r"rm\s+-rf",          "Recursive force delete"),
+    (r"sudo\s+",           "Elevated privileges required"),
+    (r"chmod\s+777",       "Insecure file permissions"),
+    (r"curl[^|]+\|\s*sh",  "Piping curl to shell"),
+    (r"curl[^|]+\|\s*bash","Piping curl to bash"),
+    (r">\s*/dev/sd",       "Writing to block device"),
+    (r"mkfs",              "Filesystem formatting"),
+    (r"dd\s+if=",          "Low-level disk operation"),
+    (r":\(\)\{.*\}",       "Fork bomb detected"),
 ];
 
+static COMPILED: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+
+fn compiled() -> &'static [(Regex, &'static str)] {
+    COMPILED.get_or_init(|| {
+        DANGEROUS_PATTERNS
+            .iter()
+            .map(|(pat, msg)| (Regex::new(pat).expect("invalid regex pattern"), *msg))
+            .collect()
+    })
+}
+
 pub fn check(command: &str) -> DangerResult {
-    for dp in DANGEROUS_PATTERNS {
-        let re = Regex::new(dp.pattern).expect("invalid regex pattern");
+    for (re, msg) in compiled() {
         if re.is_match(command) {
             return DangerResult {
                 is_dangerous: true,
-                message: Some(dp.message.to_string()),
+                message: Some((*msg).to_string()),
             };
         }
     }

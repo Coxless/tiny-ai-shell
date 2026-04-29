@@ -8,7 +8,7 @@ mod logger;
 mod config;
 
 use clap::Parser;
-use llm::LlmClient;
+use llm::{LlmClient, resolve_language};
 use ui::Action;
 
 #[derive(Parser, Debug)]
@@ -64,7 +64,12 @@ async fn main() {
         context::gather()
     };
 
-    let client = LlmClient::new(model, url);
+    let env_lang = std::env::var("LC_ALL")
+        .or_else(|_| std::env::var("LANG"))
+        .unwrap_or_default();
+    let language = resolve_language(cfg.language.as_deref(), &env_lang).to_string();
+
+    let client = LlmClient::new(model, url, language);
 
     if let Err(e) = client.check_connectivity().await {
         eprintln!("Error: {}", e);
