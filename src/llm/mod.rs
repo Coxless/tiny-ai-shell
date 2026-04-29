@@ -4,8 +4,6 @@ use crate::context::ContextInfo;
 use anyhow::Result;
 use ollama::OllamaClient;
 
-pub use ollama::resolve_base_url;
-
 pub struct LlmClient {
     pub model: String,
     pub base_url: String,
