@@ -55,7 +55,7 @@ async fn main() {
     let base_url = llm::resolve_base_url(&args.url);
     let client = LlmClient::new(args.model.clone(), base_url);
 
-    let command = match client.generate(&args.input, &ctx).await {
+    let mut command = match client.generate(&args.input, &ctx).await {
         Ok(cmd) => cmd,
         Err(e) => {
             eprintln!("Error: {}", e);
@@ -83,7 +83,7 @@ async fn main() {
 
     let mut last_explanation: Option<String> = initial_explanation;
 
-    loop {
+    'main: loop {
         let action = match ui::prompt_action(&command, last_explanation.as_deref()) {
             Ok(a) => a,
             Err(e) => {
@@ -126,9 +126,24 @@ async fn main() {
                 // loop continues: show prompt again with explanation
             }
             Action::Rewrite => {
-                // Step 9
-                eprintln!("Rewrite will be implemented in step 9.");
-                std::process::exit(0);
+                let instruction = match ui::prompt_rewrite_instruction() {
+                    Ok(s) if s.is_empty() => continue 'main,
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        continue 'main;
+                    }
+                };
+                println!("→ Rewriting...");
+                match client.rewrite(&args.input, &command, &instruction).await {
+                    Ok(new_cmd) => {
+                        command = new_cmd;
+                        last_explanation = None;
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                    }
+                }
             }
         }
     }
