@@ -56,6 +56,8 @@ async fn main() {
         .or_else(|| std::env::var("TA_OLLAMA_URL").ok())
         .unwrap_or(cfg.ollama_url);
 
+    config::ensure_config_dir();
+
     let ctx = if args.no_context {
         context::default_context()
     } else {
@@ -63,6 +65,11 @@ async fn main() {
     };
 
     let client = LlmClient::new(model, url);
+
+    if let Err(e) = client.check_connectivity().await {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
 
     let mut command = match client.generate(&args.input, &ctx).await {
         Ok(cmd) => cmd,

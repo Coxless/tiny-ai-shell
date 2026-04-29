@@ -35,6 +35,21 @@ impl OllamaClient {
         Ok(Self { client, base_url, model })
     }
 
+    pub async fn check_connectivity(&self) -> Result<()> {
+        self.client
+            .get(&self.base_url)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_connect() || e.is_timeout() {
+                    anyhow!("Ollama is not running. Start with: ollama serve")
+                } else {
+                    anyhow!("Failed to connect to Ollama: {}", e)
+                }
+            })?;
+        Ok(())
+    }
+
     pub async fn generate(&self, prompt: &str) -> Result<String> {
         let url = format!("{}/api/generate", self.base_url);
         let request = GenerateRequest {
@@ -138,6 +153,33 @@ fn clean_command(s: &str) -> String {
 mod tests {
     use super::*;
     use mockito::Server;
+
+    #[tokio::test]
+    async fn test_check_connectivity_success() {
+        let mut server = Server::new_async().await;
+        let mock = server
+            .mock("GET", "/")
+            .with_status(200)
+            .with_body("Ollama is running")
+            .create_async()
+            .await;
+
+        let client = OllamaClient::new(server.url(), "mistral".to_string()).unwrap();
+        assert!(client.check_connectivity().await.is_ok());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_check_connectivity_refused() {
+        let client =
+            OllamaClient::new("http://127.0.0.1:1".to_string(), "mistral".to_string()).unwrap();
+        let err = client.check_connectivity().await.unwrap_err();
+        assert!(
+            err.to_string().contains("Ollama is not running"),
+            "expected 'Ollama is not running' in: {}",
+            err
+        );
+    }
 
     #[test]
     fn test_clean_command_plain() {
