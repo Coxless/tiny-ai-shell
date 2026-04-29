@@ -35,52 +35,65 @@
 
 #### プラン
 
-**言語選定**: Go
+**言語選定**: Rust
 
-- 単一バイナリビルドが容易
-- 起動100ms以内を満たす
-- クロスプラットフォーム対応
-- CGO不要で依存最小化
+- 単一バイナリビルドが容易（`cargo build --release`）
+- 起動100ms以内を満たす（ゼロコスト抽象・最小ランタイム）
+- 対応OS: **Linux のみ**（macOS・Windows は対象外）
+- 外部ランタイム不要で依存最小化
 
 **ディレクトリ構成**:
 
 ```
 tiny-ai-shell/
-├── cmd/
-│   └── ta/
-│       └── main.go          # エントリポイント
-├── internal/
-│   ├── llm/                 # LLMクライアント
-│   │   └── ollama.go
-│   ├── context/             # コンテキスト取得
-│   │   └── context.go
-│   ├── safety/              # セーフティ機構
-│   │   └── safety.go
-│   ├── ui/                  # 確認フロー・表示
-│   │   └── prompt.go
-│   ├── executor/            # コマンド実行
-│   │   └── executor.go
-│   ├── clipboard/           # クリップボード
-│   │   └── clipboard.go
-│   └── logger/              # ログ
-│       └── logger.go
-├── go.mod
-├── go.sum
+├── src/
+│   ├── main.rs              # エントリポイント
+│   ├── llm/
+│   │   ├── mod.rs           # LLMクライアント
+│   │   └── ollama.rs
+│   ├── context/
+│   │   └── mod.rs           # コンテキスト取得
+│   ├── safety/
+│   │   └── mod.rs           # セーフティ機構
+│   ├── ui/
+│   │   ├── mod.rs           # 確認フロー・表示
+│   │   └── color.rs
+│   ├── executor/
+│   │   └── mod.rs           # コマンド実行
+│   ├── clipboard/
+│   │   └── mod.rs           # クリップボード
+│   ├── logger/
+│   │   └── mod.rs           # ログ
+│   └── config/
+│       └── mod.rs           # 設定読み込み
+├── Cargo.toml
 ├── Makefile
 └── README.md
 ```
 
-**依存パッケージ**（最小限）:
-- `github.com/spf13/cobra` - CLI引数パース
-- 標準ライブラリのみで他は実装
+**依存クレート**（最小限）:
+
+```toml
+[dependencies]
+clap        = { version = "4", features = ["derive"] }  # CLI引数パース
+reqwest     = { version = "0.12", features = ["json", "stream"] }  # HTTP
+tokio       = { version = "1", features = ["full"] }    # 非同期ランタイム
+serde       = { version = "1", features = ["derive"] }  # シリアライズ
+serde_json  = "1"                                       # JSONパース
+toml        = "0.8"                                     # 設定ファイル
+regex       = "1"                                       # 危険パターン検知
+crossterm   = "0.27"                                    # 生キー入力
+futures-util = "0.3"                                    # ストリーミング
+```
 
 **実装内容**:
-- `go mod init`
-- エントリポイント（`cmd/ta/main.go`）のスタブ
-- Makefile（`make build` で `./bin/ta` 生成）
-- 各 internal パッケージのスタブファイル
+- `cargo new --name ta` でプロジェクト初期化
+- `Cargo.toml` への依存クレート追加
+- `src/main.rs` のスタブ（`clap` によるCLI定義）
+- Makefile（`make build` で `./target/release/ta` 生成）
+- 各モジュールのスタブファイル（`mod.rs`）
 
-**完了条件**: `make build && ./bin/ta --help` が動作する
+**完了条件**: `make build && ./target/release/ta --help` が動作する
 
 ---
 
@@ -110,12 +123,12 @@ User:
 ```
 
 **レスポンス処理**:
-- ストリーミングレスポンスを受け取り、`response` フィールドを結合
+- `reqwest` のストリーミングレスポンス（`bytes_stream()`）を受け取り、`response` フィールドを結合
 - 前後の空白・改行を除去
 - コードブロック（`` ` ``）が含まれる場合は除去
 
 **設定**:
-- デフォルトモデル: `mistral` （`~/.config/ta/config.toml` で上書き可）
+- デフォルトモデル: `mistral`（`~/.config/ta/config.toml` で上書き可）
 - タイムアウト: 30秒
 - ベースURL: 環境変数 `TA_OLLAMA_URL` で上書き可
 
@@ -124,11 +137,11 @@ User:
 - モデルが存在しない場合: `"Model 'xxx' not found. Pull with: ollama pull xxx"`
 
 **実装内容**:
-- `internal/llm/ollama.go`: API通信・レスポンスパース
-- `internal/llm/prompt.go`: プロンプト構築
-- ユニットテスト（モックサーバー使用）
+- `src/llm/ollama.rs`: API通信・レスポンスパース
+- `src/llm/mod.rs`: プロンプト構築
+- ユニットテスト（`mockito` クレートによるモックサーバー使用）
 
-**完了条件**: `llm.Generate(ctx, input, contextInfo)` がOllamaからコマンド文字列を返す
+**完了条件**: `llm::generate(input, context_info).await` がOllamaからコマンド文字列を返す
 
 ---
 
@@ -140,29 +153,29 @@ User:
 
 | 情報 | 取得方法 | 制限 |
 |------|----------|------|
-| カレントディレクトリ | `os.Getwd()` | なし |
-| ファイル一覧 | `os.ReadDir()` | 最大20件、ファイル名のみ |
+| カレントディレクトリ | `std::env::current_dir()` | なし |
+| ファイル一覧 | `std::fs::read_dir()` | 最大20件、ファイル名のみ |
 | Gitリポジトリ | `.git` ディレクトリの存在確認 | ブランチ名のみ |
-| OS | `runtime.GOOS` | なし |
+| OS | 固定値 `"linux"` | なし |
 
 **出力形式**:
 
-```go
-type ContextInfo struct {
-    OS      string
-    PWD     string
-    Files   []string  // 最大20件
-    IsGit   bool
-    Branch  string    // Gitの場合のみ
+```rust
+pub struct ContextInfo {
+    pub os: String,
+    pub pwd: String,
+    pub files: Vec<String>,  // 最大20件
+    pub is_git: bool,
+    pub branch: Option<String>,  // Gitの場合のみ
 }
 ```
 
-**`--no-context` フラグ時**: 空の `ContextInfo` を返す
+**`--no-context` フラグ時**: デフォルト値の `ContextInfo` を返す
 
 **実装内容**:
-- `internal/context/context.go`: コンテキスト取得ロジック
+- `src/context/mod.rs`: コンテキスト取得ロジック
 
-**完了条件**: `context.Gather()` が構造体を返す
+**完了条件**: `context::gather()` が構造体を返す
 
 ---
 
@@ -172,18 +185,23 @@ type ContextInfo struct {
 
 **危険パターン定義**:
 
-```go
-var dangerousPatterns = []DangerPattern{
-    {Pattern: `rm\s+-rf`, Message: "Recursive force delete"},
-    {Pattern: `sudo\s+`, Message: "Elevated privileges required"},
-    {Pattern: `chmod\s+777`, Message: "Insecure file permissions"},
-    {Pattern: `curl[^|]+\|\s*sh`, Message: "Piping curl to shell"},
-    {Pattern: `curl[^|]+\|\s*bash`, Message: "Piping curl to bash"},
-    {Pattern: `>\s*/dev/sd`, Message: "Writing to block device"},
-    {Pattern: `mkfs`, Message: "Filesystem formatting"},
-    {Pattern: `dd\s+if=`, Message: "Low-level disk operation"},
-    {Pattern: `:\(\)\{.*\}`, Message: "Fork bomb detected"},
+```rust
+struct DangerPattern {
+    pattern: &'static str,
+    message: &'static str,
 }
+
+static DANGEROUS_PATTERNS: &[DangerPattern] = &[
+    DangerPattern { pattern: r"rm\s+-rf",           message: "Recursive force delete" },
+    DangerPattern { pattern: r"sudo\s+",             message: "Elevated privileges required" },
+    DangerPattern { pattern: r"chmod\s+777",         message: "Insecure file permissions" },
+    DangerPattern { pattern: r"curl[^|]+\|\s*sh",    message: "Piping curl to shell" },
+    DangerPattern { pattern: r"curl[^|]+\|\s*bash",  message: "Piping curl to bash" },
+    DangerPattern { pattern: r">\s*/dev/sd",         message: "Writing to block device" },
+    DangerPattern { pattern: r"mkfs",                message: "Filesystem formatting" },
+    DangerPattern { pattern: r"dd\s+if=",            message: "Low-level disk operation" },
+    DangerPattern { pattern: r":\(\)\{.*\}",         message: "Fork bomb detected" },
+];
 ```
 
 **検知時の表示**:
@@ -199,10 +217,10 @@ Continue anyway? [y/N]:
 - `y` で続行した場合も確認フローに進む（実行は確認フロー側）
 
 **実装内容**:
-- `internal/safety/safety.go`: パターンマッチング
+- `src/safety/mod.rs`: パターンマッチング（`regex` クレート使用）
 - ユニットテスト（各パターンの検知確認）
 
-**完了条件**: `safety.Check(command)` が危険判定と理由を返す
+**完了条件**: `safety::check(command)` が危険判定と理由を返す
 
 ---
 
@@ -220,7 +238,7 @@ $ ls -la
 ```
 
 **入力処理**:
-- 生のキー入力（Enterなし）: `term.MakeRaw()` を使用
+- 生のキー入力（Enterなし）: `crossterm::terminal::enable_raw_mode()` を使用
 - 大文字小文字どちらも受け付ける
 - 不明なキーは無視してプロンプト再表示
 
@@ -228,23 +246,23 @@ $ ls -la
 
 | キー | アクション | 戻り値 |
 |------|-----------|--------|
-| `y` / `Y` | 実行 | `ActionExecute` |
-| `n` / `N` / `ESC` / `q` | キャンセル | `ActionCancel` |
-| `c` / `C` | コピー | `ActionCopy` |
-| `e` / `E` | 説明 | `ActionExplain` |
-| `r` / `R` | 修正 | `ActionRewrite` |
+| `y` / `Y` | 実行 | `Action::Execute` |
+| `n` / `N` / `ESC` / `q` | キャンセル | `Action::Cancel` |
+| `c` / `C` | コピー | `Action::Copy` |
+| `e` / `E` | 説明 | `Action::Explain` |
+| `r` / `R` | 修正 | `Action::Rewrite` |
 
 **カラー出力**:
-- コマンド: シアン（`\033[36m`）
-- 危険警告: 赤（`\033[31m`）
+- コマンド: シアン（`\x1b[36m`）
+- 危険警告: 赤（`\x1b[31m`）
 - プロンプト: 標準
 - `NO_COLOR` 環境変数でオフ
 
-**依存**: `golang.org/x/term` のみ
+**依存**: `crossterm` のみ
 
 **実装内容**:
-- `internal/ui/prompt.go`: 表示・入力処理
-- `internal/ui/color.go`: カラー出力ヘルパー
+- `src/ui/mod.rs`: 表示・入力処理
+- `src/ui/color.rs`: カラー出力ヘルパー
 
 **完了条件**: インタラクティブな確認フローが動作する
 
@@ -256,15 +274,18 @@ $ ls -la
 
 **実行方式**:
 
-```go
-cmd := exec.Command("sh", "-c", command)
-cmd.Stdout = os.Stdout
-cmd.Stderr = os.Stderr
-cmd.Stdin = os.Stdin
+```rust
+let status = std::process::Command::new("sh")
+    .arg("-c")
+    .arg(command)
+    .stdin(Stdio::inherit())
+    .stdout(Stdio::inherit())
+    .stderr(Stdio::inherit())
+    .status()?;
 ```
 
 - ユーザーのシェルを継承（`$SHELL` 環境変数使用、フォールバックは `sh`）
-- コマンドの終了コードを `ta` の終了コードとして伝播
+- コマンドの終了コードを `ta` の終了コードとして伝播（`std::process::exit(code)`）
 
 **実行前後の表示**:
 
@@ -282,7 +303,7 @@ cmd.Stdin = os.Stdin
 **`--dry` モード時**: 実行せずコマンドを表示して終了
 
 **実装内容**:
-- `internal/executor/executor.go`: コマンド実行ロジック
+- `src/executor/mod.rs`: コマンド実行ロジック
 
 **完了条件**: コマンドが実行され、終了コードが伝播される
 
@@ -292,22 +313,20 @@ cmd.Stdin = os.Stdin
 
 #### プラン
 
-**OS別実装**:
+**Linux向け実装**:
 
-| OS | コマンド | フォールバック |
-|----|---------|--------------|
-| macOS | `pbcopy` | なし |
-| Linux (X11) | `xclip -selection clipboard` | `xsel --clipboard` |
-| Linux (Wayland) | `wl-copy` | xclip にフォールバック |
-| その他 | エラーメッセージ表示 | なし |
+| 環境 | コマンド | フォールバック |
+|------|---------|--------------|
+| Wayland | `wl-copy` | xclip にフォールバック |
+| X11 | `xclip -selection clipboard` | `xsel --clipboard` |
 
 **Wayland検知**: `$WAYLAND_DISPLAY` 環境変数の有無
 
 **実装**:
 
-```go
-func Copy(text string) error {
-    // OS判定 → 適切なコマンドにパイプ
+```rust
+pub fn copy(text: &str) -> Result<()> {
+    // $WAYLAND_DISPLAY の有無で wl-copy / xclip を選択
 }
 ```
 
@@ -317,7 +336,7 @@ func Copy(text string) error {
 ```
 
 **実装内容**:
-- `internal/clipboard/clipboard.go`
+- `src/clipboard/mod.rs`
 
 **完了条件**: 各OS環境でコマンドがクリップボードにコピーされる
 
@@ -403,7 +422,7 @@ Output exactly ONE shell command, no explanation.
 
 #### プラン
 
-**保存先**: `~/.local/share/ta/history.json`（Linux） / `~/Library/Application Support/ta/history.json`（macOS）
+**保存先**: `~/.local/share/ta/history.json`
 
 **ログエントリ形式**:
 
@@ -426,7 +445,7 @@ Output exactly ONE shell command, no explanation.
 **ログサイズ制限**: 最大1000件（古いエントリを自動削除）
 
 **実装内容**:
-- `internal/logger/logger.go`: JSON読み書き・ローテーション
+- `src/logger/mod.rs`: JSON読み書き・ローテーション（`serde_json` 使用）
 
 **完了条件**: 各アクション後にログが記録される
 
@@ -448,7 +467,7 @@ Flags:
   --model string  使用するOllamaモデル (default: "mistral")
   --url string    Ollama APIのURL (default: "http://localhost:11434")
   -h, --help      ヘルプを表示
-  -v, --version   バージョンを表示
+  -V, --version   バージョンを表示
 ```
 
 **設定ファイル** (`~/.config/ta/config.toml`):
@@ -462,8 +481,8 @@ language = "ja"  # explain時の言語
 **優先順位**: CLIフラグ > 環境変数 > 設定ファイル > デフォルト値
 
 **実装内容**:
-- `cmd/ta/main.go`: cobra によるCLI定義
-- `internal/config/config.go`: 設定読み込み
+- `src/main.rs`: `clap` の `derive` マクロによるCLI定義
+- `src/config/mod.rs`: `toml` クレートによる設定読み込み（`serde` でデシリアライズ）
 
 **完了条件**: すべてのオプションが正しく動作する
 
@@ -477,34 +496,31 @@ language = "ja"  # explain時の言語
 
 ```makefile
 build:
-    go build -ldflags="-s -w -X main.Version=$(VERSION)" \
-        -o bin/ta ./cmd/ta
+    cargo build --release
+    cp target/release/ta bin/ta
 
-# クロスコンパイル
-build-linux:
-    GOOS=linux GOARCH=amd64 go build ...
-
-build-darwin:
-    GOOS=darwin GOARCH=arm64 go build ...
+# 静的リンクバイナリ（musl）
+build-static:
+    cargo build --release --target x86_64-unknown-linux-musl
 ```
 
 **インストール手順** (README):
 
 ```bash
-# Homebrewは後回し、まず手動インストール
+# 手動インストール
 make build
 sudo cp bin/ta /usr/local/bin/ta
 
-# または go install
-go install github.com/user/tiny-ai-shell/cmd/ta@latest
+# または cargo install
+cargo install --path .
 ```
 
 **前提チェック**:
 - `ta` 起動時にOllamaの疎通確認（失敗時はわかりやすいメッセージ）
-- 初回起動時に設定ディレクトリを自動作成
+- 初回起動時に設定ディレクトリを自動作成（`std::fs::create_dir_all`）
 
 **テスト**:
-- `go test ./...` でユニットテスト全通過
+- `cargo test` でユニットテスト全通過
 - 主要シナリオの手動テストチェックリスト
 
 **完了条件**: 単一バイナリで配布可能、README にインストール手順記載
