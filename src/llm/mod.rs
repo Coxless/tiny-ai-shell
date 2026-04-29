@@ -76,13 +76,28 @@ impl LlmClient {
         self.ollama_client()?.generate(&prompt).await
     }
 
+    fn build_rewrite_prompt(&self, original_input: &str, command: &str, instruction: &str) -> String {
+        format!(
+            "Original request: {original_input}\n\
+             Generated command: {command}\n\
+             User feedback: {instruction}\n\
+             \n\
+             Generate an improved command based on the feedback.\n\
+             Output exactly ONE shell command, no explanation.",
+            original_input = original_input,
+            command = command,
+            instruction = instruction,
+        )
+    }
+
     pub async fn rewrite(
         &self,
-        _original_input: &str,
-        _command: &str,
-        _instruction: &str,
+        original_input: &str,
+        command: &str,
+        instruction: &str,
     ) -> Result<String> {
-        todo!("implement in step 9")
+        let prompt = self.build_rewrite_prompt(original_input, command, instruction);
+        self.ollama_client()?.generate(&prompt).await
     }
 }
 
@@ -140,5 +155,24 @@ mod tests {
         std::env::remove_var("LC_ALL");
         std::env::remove_var("LANG");
         assert_eq!(LlmClient::detect_language(), "English");
+    }
+
+    #[test]
+    fn test_rewrite_prompt_contains_all_parts() {
+        let client = make_client();
+        let prompt = client.build_rewrite_prompt("list files", "ls -a", "no hidden files");
+        assert!(prompt.contains("list files"));
+        assert!(prompt.contains("ls -a"));
+        assert!(prompt.contains("no hidden files"));
+        assert!(prompt.contains("ONE shell command"));
+    }
+
+    #[test]
+    fn test_rewrite_prompt_structure() {
+        let client = make_client();
+        let prompt = client.build_rewrite_prompt("req", "cmd", "fix");
+        assert!(prompt.contains("Original request: req"));
+        assert!(prompt.contains("Generated command: cmd"));
+        assert!(prompt.contains("User feedback: fix"));
     }
 }

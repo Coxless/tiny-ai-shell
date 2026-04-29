@@ -78,6 +78,17 @@ pub fn prompt_action(command: &str, explanation: Option<&str>) -> anyhow::Result
     }
 }
 
+/// Show rewrite prompt, read a line of text instruction from the user.
+pub fn prompt_rewrite_instruction() -> anyhow::Result<String> {
+    // Ensure raw mode is off so we get normal line input.
+    terminal::disable_raw_mode().ok();
+    print!("[r] Rewrite\nInstruction: ");
+    io::stdout().flush()?;
+    let mut line = String::new();
+    io::stdin().read_line(&mut line)?;
+    Ok(line.trim().to_string())
+}
+
 fn read_char_key() -> anyhow::Result<char> {
     terminal::enable_raw_mode()?;
     let result = read_char_raw();
