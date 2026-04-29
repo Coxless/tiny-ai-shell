@@ -65,6 +65,7 @@ async fn main() {
 
     if args.dry {
         let exit_code = executor::run(&command, true).unwrap_or(0);
+        logger::record(&args.input, &command, "dry-run", Some(exit_code), &ctx.pwd, &ctx.os);
         std::process::exit(exit_code);
     }
 
@@ -101,9 +102,11 @@ async fn main() {
                         1
                     }
                 };
+                logger::record(&args.input, &command, "executed", Some(exit_code), &ctx.pwd, &ctx.os);
                 std::process::exit(exit_code);
             }
             Action::Cancel => {
+                logger::record(&args.input, &command, "cancelled", None, &ctx.pwd, &ctx.os);
                 println!("Cancelled.");
                 std::process::exit(0);
             }
@@ -112,6 +115,7 @@ async fn main() {
                     Ok(_) => println!("✓ Copied to clipboard"),
                     Err(e) => eprintln!("Error: {}", e),
                 }
+                logger::record(&args.input, &command, "copied", None, &ctx.pwd, &ctx.os);
                 std::process::exit(0);
             }
             Action::Explain => {
