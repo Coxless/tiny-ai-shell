@@ -38,6 +38,10 @@ impl LlmClient {
         )
     }
 
+    pub async fn check_connectivity(&self) -> Result<()> {
+        self.ollama_client()?.check_connectivity().await
+    }
+
     pub async fn generate(&self, input: &str, context: &ContextInfo) -> Result<String> {
         let prompt = self.build_generate_prompt(input, context);
         self.ollama_client()?.generate(&prompt).await

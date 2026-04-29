@@ -33,6 +33,13 @@ impl Default for Config {
     }
 }
 
+pub fn ensure_config_dir() {
+    if let Ok(home) = std::env::var("HOME") {
+        let dir = PathBuf::from(home).join(".config").join("ta");
+        let _ = std::fs::create_dir_all(&dir);
+    }
+}
+
 fn config_path() -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
     Some(PathBuf::from(home).join(".config").join("ta").join("config.toml"))
