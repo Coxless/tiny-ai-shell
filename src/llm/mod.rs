@@ -45,8 +45,35 @@ impl LlmClient {
         self.ollama_client()?.generate(&prompt).await
     }
 
-    pub async fn explain(&self, _command: &str) -> Result<String> {
-        todo!("implement in step 8")
+    fn detect_language() -> &'static str {
+        let lang = std::env::var("LC_ALL")
+            .or_else(|_| std::env::var("LANG"))
+            .unwrap_or_default();
+        if lang.starts_with("ja") {
+            "Japanese"
+        } else {
+            "English"
+        }
+    }
+
+    fn build_explain_prompt(&self, command: &str) -> String {
+        let language = Self::detect_language();
+        format!(
+            "Explain this shell command concisely in {language}:\n\
+             {command}\n\
+             \n\
+             Rules:\n\
+             - One or two sentences maximum\n\
+             - Focus on what it does, not how flags work in detail\n\
+             - Use plain language",
+            language = language,
+            command = command,
+        )
+    }
+
+    pub async fn explain(&self, command: &str) -> Result<String> {
+        let prompt = self.build_explain_prompt(command);
+        self.ollama_client()?.generate(&prompt).await
     }
 
     pub async fn rewrite(
@@ -90,5 +117,28 @@ mod tests {
         assert!(prompt.contains("ONE shell command"));
         assert!(prompt.contains("no markdown"));
         assert!(prompt.contains("no code blocks"));
+    }
+
+    #[test]
+    fn test_explain_prompt_contains_command() {
+        let client = make_client();
+        let prompt = client.build_explain_prompt("ls -la");
+        assert!(prompt.contains("ls -la"));
+        assert!(prompt.contains("One or two sentences maximum"));
+        assert!(prompt.contains("plain language"));
+    }
+
+    #[test]
+    fn test_detect_language_japanese() {
+        std::env::set_var("LC_ALL", "ja_JP.UTF-8");
+        assert_eq!(LlmClient::detect_language(), "Japanese");
+        std::env::remove_var("LC_ALL");
+    }
+
+    #[test]
+    fn test_detect_language_english_fallback() {
+        std::env::remove_var("LC_ALL");
+        std::env::remove_var("LANG");
+        assert_eq!(LlmClient::detect_language(), "English");
     }
 }

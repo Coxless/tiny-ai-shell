@@ -68,46 +68,68 @@ async fn main() {
         std::process::exit(exit_code);
     }
 
-    let action = match ui::prompt_action(&command) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            std::process::exit(1);
+    // --explain: show explanation immediately before entering interactive flow
+    let initial_explanation = if args.explain {
+        match client.explain(&command).await {
+            Ok(exp) => Some(exp),
+            Err(e) => {
+                eprintln!("Error getting explanation: {}", e);
+                None
+            }
         }
+    } else {
+        None
     };
 
-    match action {
-        Action::Execute => {
-            let exit_code = match executor::run(&command, false) {
-                Ok(code) => code,
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                    1
-                }
-            };
-            std::process::exit(exit_code);
-        }
-        Action::Cancel => {
-            println!("Cancelled.");
-            std::process::exit(0);
-        }
-        Action::Copy => {
-            // Step 7
-            match clipboard::copy(&command) {
-                Ok(_) => println!("✓ Copied to clipboard"),
-                Err(e) => eprintln!("Error: {}", e),
+    let mut last_explanation: Option<String> = initial_explanation;
+
+    loop {
+        let action = match ui::prompt_action(&command, last_explanation.as_deref()) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
             }
-            std::process::exit(0);
-        }
-        Action::Explain => {
-            // Step 8
-            eprintln!("Explain will be implemented in step 8.");
-            std::process::exit(0);
-        }
-        Action::Rewrite => {
-            // Step 9
-            eprintln!("Rewrite will be implemented in step 9.");
-            std::process::exit(0);
+        };
+
+        match action {
+            Action::Execute => {
+                let exit_code = match executor::run(&command, false) {
+                    Ok(code) => code,
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        1
+                    }
+                };
+                std::process::exit(exit_code);
+            }
+            Action::Cancel => {
+                println!("Cancelled.");
+                std::process::exit(0);
+            }
+            Action::Copy => {
+                match clipboard::copy(&command) {
+                    Ok(_) => println!("✓ Copied to clipboard"),
+                    Err(e) => eprintln!("Error: {}", e),
+                }
+                std::process::exit(0);
+            }
+            Action::Explain => {
+                match client.explain(&command).await {
+                    Ok(exp) => {
+                        last_explanation = Some(exp);
+                    }
+                    Err(e) => {
+                        eprintln!("Error getting explanation: {}", e);
+                    }
+                }
+                // loop continues: show prompt again with explanation
+            }
+            Action::Rewrite => {
+                // Step 9
+                eprintln!("Rewrite will be implemented in step 9.");
+                std::process::exit(0);
+            }
         }
     }
 }
