@@ -33,18 +33,28 @@ struct Args {
     #[arg(long)]
     no_context: bool,
 
-    /// Ollama model to use
-    #[arg(long, default_value = "mistral")]
-    model: String,
+    /// Ollama model to use (default: "mistral", env: TA_MODEL, config: ~/.config/ta/config.toml)
+    #[arg(long)]
+    model: Option<String>,
 
-    /// Ollama API base URL
-    #[arg(long, default_value = "http://localhost:11434")]
-    url: String,
+    /// Ollama API base URL (default: "http://localhost:11434", env: TA_OLLAMA_URL, config: ~/.config/ta/config.toml)
+    #[arg(long)]
+    url: Option<String>,
 }
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
+    let cfg = config::load();
+
+    // Priority: CLI flag > env var > config file > default
+    let model = args.model
+        .or_else(|| std::env::var("TA_MODEL").ok())
+        .unwrap_or(cfg.model);
+
+    let url = args.url
+        .or_else(|| std::env::var("TA_OLLAMA_URL").ok())
+        .unwrap_or(cfg.ollama_url);
 
     let ctx = if args.no_context {
         context::default_context()
@@ -52,8 +62,7 @@ async fn main() {
         context::gather()
     };
 
-    let base_url = llm::resolve_base_url(&args.url);
-    let client = LlmClient::new(args.model.clone(), base_url);
+    let client = LlmClient::new(model, url);
 
     let mut command = match client.generate(&args.input, &ctx).await {
         Ok(cmd) => cmd,

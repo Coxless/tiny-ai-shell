@@ -119,12 +119,6 @@ impl OllamaClient {
     }
 }
 
-/// Resolve the Ollama base URL, allowing TA_OLLAMA_URL env var to override the default.
-/// Explicit CLI flags take precedence and should be passed directly to LlmClient::new.
-pub fn resolve_base_url(configured_url: &str) -> String {
-    std::env::var("TA_OLLAMA_URL").unwrap_or_else(|_| configured_url.to_string())
-}
-
 fn clean_command(s: &str) -> String {
     let s = s.trim();
     let s = if s.starts_with("```") {
