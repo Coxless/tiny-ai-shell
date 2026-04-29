@@ -7,8 +7,9 @@ pub struct Config {
     pub model: String,
     #[serde(default = "default_ollama_url")]
     pub ollama_url: String,
-    #[serde(default = "default_language")]
-    pub language: String,
+    /// Explicit language override ("ja" / "en"). None means auto-detect from $LANG/$LC_ALL.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 fn default_model() -> String {
@@ -19,16 +20,12 @@ fn default_ollama_url() -> String {
     "http://localhost:11434".to_string()
 }
 
-fn default_language() -> String {
-    "en".to_string()
-}
-
 impl Default for Config {
     fn default() -> Self {
         Self {
             model: default_model(),
             ollama_url: default_ollama_url(),
-            language: default_language(),
+            language: None,
         }
     }
 }
@@ -69,7 +66,7 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.model, "mistral");
         assert_eq!(cfg.ollama_url, "http://localhost:11434");
-        assert_eq!(cfg.language, "en");
+        assert!(cfg.language.is_none());
     }
 
     #[test]
@@ -82,7 +79,7 @@ language = "ja"
         let cfg = parse(toml);
         assert_eq!(cfg.model, "llama3");
         assert_eq!(cfg.ollama_url, "http://192.168.1.1:11434");
-        assert_eq!(cfg.language, "ja");
+        assert_eq!(cfg.language.as_deref(), Some("ja"));
     }
 
     #[test]
@@ -91,7 +88,7 @@ language = "ja"
         let cfg = parse(toml);
         assert_eq!(cfg.model, "llama3");
         assert_eq!(cfg.ollama_url, "http://localhost:11434");
-        assert_eq!(cfg.language, "en");
+        assert!(cfg.language.is_none());
     }
 
     #[test]

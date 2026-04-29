@@ -7,11 +7,21 @@ use ollama::OllamaClient;
 pub struct LlmClient {
     pub model: String,
     pub base_url: String,
+    pub language: String,
+}
+
+/// Resolve display language for explanations.
+/// Priority: config override > env var detection > "English"
+pub fn resolve_language(config_lang: Option<&str>, env_lang: &str) -> &'static str {
+    if let Some(lang) = config_lang {
+        return if lang.starts_with("ja") { "Japanese" } else { "English" };
+    }
+    if env_lang.starts_with("ja") { "Japanese" } else { "English" }
 }
 
 impl LlmClient {
-    pub fn new(model: String, base_url: String) -> Self {
-        Self { model, base_url }
+    pub fn new(model: String, base_url: String, language: String) -> Self {
+        Self { model, base_url, language }
     }
 
     fn ollama_client(&self) -> Result<OllamaClient> {
@@ -19,7 +29,7 @@ impl LlmClient {
     }
 
     fn build_generate_prompt(&self, input: &str, context: &ContextInfo) -> String {
-        format!(
+        let mut prompt = format!(
             "System:\n\
              You are a CLI assistant.\n\
              Rules:\n\
@@ -28,14 +38,21 @@ impl LlmClient {
              - Avoid dangerous commands\n\
              - Prefer safe flags\n\
              - Consider the OS: {os}\n\
-             - Current directory: {pwd}\n\
-             \n\
-             User:\n\
-             {input}",
+             - Current directory: {pwd}",
             os = context.os,
             pwd = context.pwd,
-            input = input,
-        )
+        );
+
+        if !context.files.is_empty() {
+            prompt.push_str(&format!("\n- Files: {}", context.files.join(", ")));
+        }
+
+        if let Some(branch) = &context.branch {
+            prompt.push_str(&format!("\n- Git branch: {}", branch));
+        }
+
+        prompt.push_str(&format!("\n\nUser:\n{}", input));
+        prompt
     }
 
     pub async fn check_connectivity(&self) -> Result<()> {
@@ -47,19 +64,7 @@ impl LlmClient {
         self.ollama_client()?.generate(&prompt).await
     }
 
-    fn detect_language() -> &'static str {
-        let lang = std::env::var("LC_ALL")
-            .or_else(|_| std::env::var("LANG"))
-            .unwrap_or_default();
-        if lang.starts_with("ja") {
-            "Japanese"
-        } else {
-            "English"
-        }
-    }
-
     fn build_explain_prompt(&self, command: &str) -> String {
-        let language = Self::detect_language();
         format!(
             "Explain this shell command concisely in {language}:\n\
              {command}\n\
@@ -68,7 +73,7 @@ impl LlmClient {
              - One or two sentences maximum\n\
              - Focus on what it does, not how flags work in detail\n\
              - Use plain language",
-            language = language,
+            language = self.language,
             command = command,
         )
     }
@@ -109,8 +114,46 @@ mod tests {
     use crate::context::ContextInfo;
 
     fn make_client() -> LlmClient {
-        LlmClient::new("mistral".to_string(), "http://localhost:11434".to_string())
+        LlmClient::new(
+            "mistral".to_string(),
+            "http://localhost:11434".to_string(),
+            "English".to_string(),
+        )
     }
+
+    // --- resolve_language tests (pure function, no env mutation needed) ---
+
+    #[test]
+    fn test_resolve_language_config_ja() {
+        assert_eq!(resolve_language(Some("ja"), ""), "Japanese");
+        assert_eq!(resolve_language(Some("ja_JP.UTF-8"), ""), "Japanese");
+    }
+
+    #[test]
+    fn test_resolve_language_config_en() {
+        assert_eq!(resolve_language(Some("en"), ""), "English");
+    }
+
+    #[test]
+    fn test_resolve_language_env_ja() {
+        assert_eq!(resolve_language(None, "ja_JP.UTF-8"), "Japanese");
+    }
+
+    #[test]
+    fn test_resolve_language_env_en_fallback() {
+        assert_eq!(resolve_language(None, ""), "English");
+        assert_eq!(resolve_language(None, "en_US.UTF-8"), "English");
+    }
+
+    #[test]
+    fn test_resolve_language_config_overrides_env() {
+        // config "ja" wins even when env says "en"
+        assert_eq!(resolve_language(Some("ja"), "en_US.UTF-8"), "Japanese");
+        // config "en" wins even when env says "ja"
+        assert_eq!(resolve_language(Some("en"), "ja_JP.UTF-8"), "English");
+    }
+
+    // --- prompt tests ---
 
     #[test]
     fn test_prompt_contains_os_and_pwd() {
@@ -137,6 +180,38 @@ mod tests {
     }
 
     #[test]
+    fn test_prompt_includes_files() {
+        let client = make_client();
+        let ctx = ContextInfo {
+            files: vec!["Cargo.toml".to_string(), "src".to_string()],
+            ..Default::default()
+        };
+        let prompt = client.build_generate_prompt("test", &ctx);
+        assert!(prompt.contains("Cargo.toml"));
+        assert!(prompt.contains("src"));
+    }
+
+    #[test]
+    fn test_prompt_includes_git_branch() {
+        let client = make_client();
+        let ctx = ContextInfo {
+            branch: Some("main".to_string()),
+            ..Default::default()
+        };
+        let prompt = client.build_generate_prompt("test", &ctx);
+        assert!(prompt.contains("Git branch: main"));
+    }
+
+    #[test]
+    fn test_prompt_omits_files_section_when_empty() {
+        let client = make_client();
+        let ctx = ContextInfo::default();
+        let prompt = client.build_generate_prompt("test", &ctx);
+        assert!(!prompt.contains("Files:"));
+        assert!(!prompt.contains("Git branch:"));
+    }
+
+    #[test]
     fn test_explain_prompt_contains_command() {
         let client = make_client();
         let prompt = client.build_explain_prompt("ls -la");
@@ -146,17 +221,14 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_language_japanese() {
-        std::env::set_var("LC_ALL", "ja_JP.UTF-8");
-        assert_eq!(LlmClient::detect_language(), "Japanese");
-        std::env::remove_var("LC_ALL");
-    }
-
-    #[test]
-    fn test_detect_language_english_fallback() {
-        std::env::remove_var("LC_ALL");
-        std::env::remove_var("LANG");
-        assert_eq!(LlmClient::detect_language(), "English");
+    fn test_explain_prompt_uses_client_language() {
+        let ja_client = LlmClient::new(
+            "mistral".to_string(),
+            "http://localhost:11434".to_string(),
+            "Japanese".to_string(),
+        );
+        let prompt = ja_client.build_explain_prompt("ls -la");
+        assert!(prompt.contains("Japanese"));
     }
 
     #[test]
