@@ -4,6 +4,15 @@ use crate::context::ContextInfo;
 use anyhow::Result;
 use ollama::OllamaClient;
 
+/// Strip newlines and control characters from context values to prevent prompt injection.
+fn sanitize_context(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
 pub struct LlmClient {
     pub model: String,
     pub base_url: String,
@@ -39,19 +48,20 @@ impl LlmClient {
              - Prefer safe flags\n\
              - Consider the OS: {os}\n\
              - Current directory: {pwd}",
-            os = context.os,
-            pwd = context.pwd,
+            os = sanitize_context(&context.os),
+            pwd = sanitize_context(&context.pwd),
         );
 
         if !context.files.is_empty() {
-            prompt.push_str(&format!("\n- Files: {}", context.files.join(", ")));
+            let safe_files: Vec<String> = context.files.iter().map(|f| sanitize_context(f)).collect();
+            prompt.push_str(&format!("\n- Files: {}", safe_files.join(", ")));
         }
 
         if let Some(branch) = &context.branch {
-            prompt.push_str(&format!("\n- Git branch: {}", branch));
+            prompt.push_str(&format!("\n- Git branch: {}", sanitize_context(branch)));
         }
 
-        prompt.push_str(&format!("\n\nUser:\n{}", input));
+        prompt.push_str(&format!("\n\nUser:\n{}", sanitize_context(input)));
         prompt
     }
 
@@ -73,8 +83,8 @@ impl LlmClient {
              - One or two sentences maximum\n\
              - Focus on what it does, not how flags work in detail\n\
              - Use plain language",
-            language = self.language,
-            command = command,
+            language = sanitize_context(&self.language),
+            command = sanitize_context(command),
         )
     }
 
@@ -91,9 +101,9 @@ impl LlmClient {
              \n\
              Generate an improved command based on the feedback.\n\
              Output exactly ONE shell command, no explanation.",
-            original_input = original_input,
-            command = command,
-            instruction = instruction,
+            original_input = sanitize_context(original_input),
+            command = sanitize_context(command),
+            instruction = sanitize_context(instruction),
         )
     }
 

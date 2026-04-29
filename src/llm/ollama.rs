@@ -6,6 +6,22 @@ use std::time::Duration;
 
 const TIMEOUT_SECS: u64 = 30;
 
+/// Validate that the Ollama base URL is an HTTP/HTTPS URL to prevent
+/// accidental data exfiltration when env vars or config are tampered with.
+fn validate_base_url(url: &str) -> Result<()> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(anyhow!(
+            "Invalid Ollama URL '{}': must start with http:// or https://",
+            url
+        ));
+    }
+    // Reject URLs with newlines or control characters (header injection guard)
+    if url.chars().any(|c| c.is_control()) {
+        return Err(anyhow!("Invalid Ollama URL: contains control characters"));
+    }
+    Ok(())
+}
+
 #[derive(Serialize)]
 struct GenerateRequest<'a> {
     model: &'a str,
@@ -28,6 +44,7 @@ pub struct OllamaClient {
 
 impl OllamaClient {
     pub fn new(base_url: String, model: String) -> Result<Self> {
+        validate_base_url(&base_url)?;
         let client = Client::builder()
             .timeout(Duration::from_secs(TIMEOUT_SECS))
             .build()
@@ -153,6 +170,33 @@ fn clean_command(s: &str) -> String {
 mod tests {
     use super::*;
     use mockito::Server;
+
+    #[test]
+    fn test_validate_base_url_valid() {
+        assert!(validate_base_url("http://localhost:11434").is_ok());
+        assert!(validate_base_url("https://localhost:11434").is_ok());
+        assert!(validate_base_url("http://192.168.1.1:11434").is_ok());
+    }
+
+    #[test]
+    fn test_validate_base_url_invalid_scheme() {
+        assert!(validate_base_url("ftp://localhost:11434").is_err());
+        assert!(validate_base_url("file:///etc/passwd").is_err());
+        assert!(validate_base_url("ollama://localhost").is_err());
+        assert!(validate_base_url("localhost:11434").is_err());
+    }
+
+    #[test]
+    fn test_validate_base_url_control_chars() {
+        assert!(validate_base_url("http://localhost:11434\nX-Injected: evil").is_err());
+        assert!(validate_base_url("http://localhost\x00:11434").is_err());
+    }
+
+    #[test]
+    fn test_new_rejects_invalid_url() {
+        let result = OllamaClient::new("ftp://localhost".to_string(), "mistral".to_string());
+        assert!(result.is_err());
+    }
 
     #[tokio::test]
     async fn test_check_connectivity_success() {

