@@ -17,9 +17,9 @@ pub enum Action {
     Rewrite,
 }
 
-/// Show command, optional danger warning, and interactive y/n/c/e/r prompt.
+/// Show command, optional danger warning, optional explanation, and interactive y/n/c/e/r prompt.
 /// Returns the user's chosen action.
-pub fn prompt_action(command: &str) -> anyhow::Result<Action> {
+pub fn prompt_action(command: &str, explanation: Option<&str>) -> anyhow::Result<Action> {
     let colors = Colors::new();
 
     let danger = crate::safety::check(command);
@@ -43,6 +43,9 @@ pub fn prompt_action(command: &str) -> anyhow::Result<Action> {
     }
 
     println!("$ {}", colors.cyan(command));
+    if let Some(exp) = explanation {
+        println!("  → {}", exp);
+    }
     println!();
 
     print!("[y] Execute  [n] Cancel  [c] Copy  [e] Explain  [r] Rewrite\n> ");
