@@ -5,7 +5,6 @@ pub struct ContextInfo {
     pub os: String,
     pub pwd: String,
     pub files: Vec<String>,
-    pub is_git: bool,
     pub branch: Option<String>,
 }
 
@@ -44,7 +43,6 @@ pub fn gather() -> ContextInfo {
         os: "linux".to_string(),
         pwd,
         files,
-        is_git,
         branch,
     }
 }
@@ -54,7 +52,6 @@ pub fn default_context() -> ContextInfo {
         os: "linux".to_string(),
         pwd: String::new(),
         files: vec![],
-        is_git: false,
         branch: None,
     }
 }
@@ -144,7 +141,6 @@ mod tests {
         assert_eq!(ctx.os, "linux");
         assert!(ctx.pwd.is_empty());
         assert!(ctx.files.is_empty());
-        assert!(!ctx.is_git);
         assert!(ctx.branch.is_none());
     }
 }
